@@ -2,9 +2,7 @@
 
 A re-imagined menu bar app for tracking AI coding tool subscriptions like Cursor, Claude, Codex and more, all in one place with a heavy focus on UX, stability, and speed.
 
-Inspired by [CodexBar](https://github.com/steipete/CodexBar) by [@steipete](https://github.com/steipete).
-
-Same idea, very different approach:
+Inspired by [CodexBar](https://github.com/steipete/CodexBar) by [@steipete](https://github.com/steipete). Same idea, very different approach:
 
 - **Plugin architecture** — add/update providers without waiting on maintainers
 - **Cross-platform** — Tauri instead of native Swift
