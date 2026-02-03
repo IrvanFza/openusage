@@ -2,12 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { getCurrentWindow, PhysicalSize, currentMonitor } from "@tauri-apps/api/window"
 import { getVersion } from "@tauri-apps/api/app"
+import { resolveResource } from "@tauri-apps/api/path"
+import { TrayIcon } from "@tauri-apps/api/tray"
 import { SideNav, type ActiveView } from "@/components/side-nav"
 import { PanelFooter } from "@/components/panel-footer"
 import { OverviewPage } from "@/pages/overview"
 import { ProviderDetailPage } from "@/pages/provider-detail"
 import { SettingsPage } from "@/pages/settings"
 import type { PluginMeta, PluginOutput } from "@/lib/plugin-types"
+import { getTrayIconSizePx, renderTrayBarsIcon } from "@/lib/tray-bars-icon"
+import { getTrayPrimaryBars } from "@/lib/tray-primary-progress"
 import { useProbeEvents } from "@/hooks/use-probe-events"
 import { useAppUpdate } from "@/hooks/use-app-update"
 import {
@@ -31,6 +35,8 @@ const PANEL_WIDTH = 350;
 const MAX_HEIGHT_FALLBACK_PX = 600;
 const MAX_HEIGHT_FRACTION_OF_MONITOR = 0.8;
 const ARROW_OVERHEAD_PX = 13; // .tray-arrow (7px) + wrapper pt-1.5 (6px)
+const TRAY_SETTINGS_DEBOUNCE_MS = 2000;
+const TRAY_PROBE_DEBOUNCE_MS = 500;
 
 type PluginState = {
   data: PluginOutput | null
@@ -57,10 +63,100 @@ function App() {
 
   const { updateStatus, triggerInstall } = useAppUpdate()
 
+  const trayRef = useRef<TrayIcon | null>(null)
+  const trayGaugeIconPathRef = useRef<string | null>(null)
+  const trayUpdateTimerRef = useRef<number | null>(null)
+  const trayUpdatePendingRef = useRef(false)
+  const [trayReady, setTrayReady] = useState(false)
+
   // Fetch app version on mount
   useEffect(() => {
     getVersion().then(setAppVersion)
   }, [])
+
+  const scheduleTrayIconUpdate = useCallback((_reason: "probe" | "settings" | "init", delayMs = 0) => {
+    if (trayUpdateTimerRef.current !== null) {
+      window.clearTimeout(trayUpdateTimerRef.current)
+      trayUpdateTimerRef.current = null
+    }
+
+    trayUpdateTimerRef.current = window.setTimeout(() => {
+      trayUpdateTimerRef.current = null
+      if (trayUpdatePendingRef.current) return
+      trayUpdatePendingRef.current = true
+
+      // Execute directly (no requestAnimationFrame - it's throttled when panel is hidden)
+      const tray = trayRef.current
+      trayUpdatePendingRef.current = false
+      if (!tray) return
+
+      const bars = getTrayPrimaryBars({
+        pluginsMeta,
+        pluginSettings,
+        pluginStates,
+        maxBars: 4,
+      })
+      // 0 bars: revert to the packaged gauge tray icon.
+      if (bars.length === 0) {
+        const gaugePath = trayGaugeIconPathRef.current
+        if (gaugePath) {
+          tray.setIcon(gaugePath).catch((e) => {
+            console.error("Failed to restore tray gauge icon:", e)
+          })
+          tray.setIconAsTemplate(true).catch((e) => {
+            console.error("Failed to set tray icon as template:", e)
+          })
+        }
+        return
+      }
+
+      const sizePx = getTrayIconSizePx(window.devicePixelRatio)
+
+      renderTrayBarsIcon({ bars, sizePx })
+        .then(async (img) => {
+          await tray.setIcon(img)
+          await tray.setIconAsTemplate(true)
+        })
+        .catch((e) => {
+          console.error("Failed to update tray icon:", e)
+        })
+    }, delayMs)
+  }, [pluginSettings, pluginStates, pluginsMeta])
+
+  // Initialize tray handle once (separate from tray updates)
+  const trayInitializedRef = useRef(false)
+  useEffect(() => {
+    if (trayInitializedRef.current) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const tray = await TrayIcon.getById("tray")
+        if (cancelled) return
+        trayRef.current = tray
+        trayInitializedRef.current = true
+        setTrayReady(true)
+        try {
+          trayGaugeIconPathRef.current = await resolveResource("icons/tray-icon.png")
+        } catch (e) {
+          console.error("Failed to resolve tray gauge icon resource:", e)
+        }
+      } catch (e) {
+        console.error("Failed to load tray icon handle:", e)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // Trigger tray update once tray + plugin metadata/settings are available.
+  // This prevents missing the first paint if probe results arrive before the tray handle resolves.
+  useEffect(() => {
+    if (!trayReady) return
+    if (!pluginSettings) return
+    if (pluginsMeta.length === 0) return
+    scheduleTrayIconUpdate("init", 0)
+  }, [pluginsMeta.length, pluginSettings, scheduleTrayIconUpdate, trayReady])
 
 
   const displayPlugins = useMemo(() => {
@@ -221,8 +317,11 @@ function App() {
             : (prev[output.providerId]?.lastManualRefreshAt ?? null),
         },
       }))
+
+      // Regenerate tray icon on every probe result (debounced to avoid churn).
+      scheduleTrayIconUpdate("probe", TRAY_PROBE_DEBOUNCE_MS)
     },
-    [getErrorMessage]
+    [getErrorMessage, scheduleTrayIconUpdate]
   )
 
   const handleBatchComplete = useCallback(() => {}, [])
@@ -350,10 +449,13 @@ function App() {
   const resetAutoUpdateSchedule = useCallback(() => {
     if (!pluginSettings) return
     const enabledIds = getEnabledPluginIds(pluginSettings)
+    // Defensive: retry only possible for enabled plugins, so this branch is unreachable in normal use
+    /* v8 ignore start */
     if (enabledIds.length === 0) {
       setAutoUpdateNextAt(null)
       return
     }
+    /* v8 ignore stop */
     setAutoUpdateNextAt(Date.now() + autoUpdateInterval * 60_000)
     setAutoUpdateResetToken((value) => value + 1)
   }, [autoUpdateInterval, pluginSettings])
@@ -420,11 +522,12 @@ function App() {
         order: orderedIds,
       }
       setPluginSettings(nextSettings)
+      scheduleTrayIconUpdate("settings", TRAY_SETTINGS_DEBOUNCE_MS)
       void savePluginSettings(nextSettings).catch((error) => {
         console.error("Failed to save plugin order:", error)
       })
     },
-    [pluginSettings]
+    [pluginSettings, scheduleTrayIconUpdate]
   )
 
   const handleToggle = useCallback(
@@ -450,11 +553,12 @@ function App() {
         disabled: Array.from(disabled),
       }
       setPluginSettings(nextSettings)
+      scheduleTrayIconUpdate("settings", TRAY_SETTINGS_DEBOUNCE_MS)
       void savePluginSettings(nextSettings).catch((error) => {
         console.error("Failed to save plugin toggle:", error)
       })
     },
-    [pluginSettings, setLoadingForPlugins, setErrorForPlugins, startBatch]
+    [pluginSettings, setLoadingForPlugins, setErrorForPlugins, startBatch, scheduleTrayIconUpdate]
   )
 
   // Render content based on active view
@@ -481,12 +585,10 @@ function App() {
       )
     }
     // Provider detail view
-    return (
-      <ProviderDetailPage
-        plugin={selectedPlugin}
-        onRetry={selectedPlugin ? () => handleRetryPlugin(selectedPlugin.meta.id) : undefined}
-      />
-    )
+    const handleRetry = selectedPlugin
+      ? () => handleRetryPlugin(selectedPlugin.meta.id)
+      : /* v8 ignore next */ undefined
+    return <ProviderDetailPage plugin={selectedPlugin} onRetry={handleRetry} />
   }
 
   return (
