@@ -90,6 +90,24 @@ describe("claude plugin", () => {
     expect(() => plugin.probe(ctx)).toThrow("Not logged in")
   })
 
+  it("falls back to keychain when credentials file is corrupt", async () => {
+    const ctx = makeCtx()
+    ctx.host.fs.exists = () => true
+    ctx.host.fs.readText = () => "{bad json"
+    ctx.host.keychain.readGenericPassword.mockReturnValue(
+      JSON.stringify({ claudeAiOauth: { accessToken: "token", subscriptionType: "pro" } })
+    )
+    ctx.host.http.request.mockReturnValue({
+      status: 200,
+      bodyText: JSON.stringify({
+        five_hour: { utilization: 10, resets_at: "2099-01-01T00:00:00.000Z" },
+      }),
+    })
+    const plugin = await loadPlugin()
+    const result = plugin.probe(ctx)
+    expect(result.lines.find((line) => line.label === "Session")).toBeTruthy()
+  })
+
   it("renders usage lines from response", async () => {
     const ctx = makeCtx()
     ctx.host.fs.readText = () =>
@@ -154,6 +172,22 @@ describe("claude plugin", () => {
     const plugin = await loadPlugin()
     const result = plugin.probe(ctx)
     expect(result.lines.find((line) => line.label === "Session")).toBeTruthy()
+  })
+
+  it("decodes hex-encoded UTF-8 correctly (non-ascii json)", async () => {
+    const ctx = makeCtx()
+    ctx.host.fs.exists = () => false
+    const json = JSON.stringify({ claudeAiOauth: { accessToken: "token", subscriptionType: "pró" } }, null, 2)
+    const hex = Buffer.from(json, "utf8").toString("hex")
+    ctx.host.keychain.readGenericPassword.mockReturnValue(hex)
+    ctx.host.http.request.mockReturnValue({
+      status: 200,
+      bodyText: JSON.stringify({
+        five_hour: { utilization: 1, resets_at: "2099-01-01T00:00:00.000Z" },
+      }),
+    })
+    const plugin = await loadPlugin()
+    expect(() => plugin.probe(ctx)).not.toThrow()
   })
 
   it("throws on http errors and parse failures", async () => {
