@@ -48,6 +48,7 @@ export const makeCtx = () => {
     progress: (opts) => {
       const line = { type: "progress", label: opts.label, used: opts.used, limit: opts.limit, format: opts.format }
       if (opts.resetsAt) line.resetsAt = opts.resetsAt
+      if (opts.periodDurationMs) line.periodDurationMs = opts.periodDurationMs
       if (opts.color) line.color = opts.color
       return line
     },

@@ -2,10 +2,6 @@
   const KEYCHAIN_SERVICE = "OpenUsage-copilot";
   const GH_KEYCHAIN_SERVICE = "gh:github.com";
   const USAGE_URL = "https://api.github.com/copilot_internal/user";
-  const DEVICE_CODE_URL = "https://github.com/login/device/code";
-  const DEVICE_POLL_URL = "https://github.com/login/oauth/access_token";
-  const CLIENT_ID = "Iv1.b507a08c87ecfe98";
-  const SCOPES = "read:user";
 
   function readJson(ctx, path) {
     try {
@@ -109,136 +105,43 @@
     });
   }
 
-  function startDeviceFlow(ctx) {
-    let resp;
-    try {
-      resp = ctx.util.request({
-        method: "POST",
-        url: DEVICE_CODE_URL,
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        bodyText: "client_id=" + CLIENT_ID + "&scope=" + SCOPES,
-        timeoutMs: 15000,
-      });
-    } catch (e) {
-      ctx.host.log.error("device flow start failed: " + String(e));
-      throw "Usage request failed. Check your connection.";
-    }
-
-    if (resp.status < 200 || resp.status >= 300) {
-      ctx.host.log.error("device flow start HTTP " + resp.status);
-      throw (
-        "Usage request failed (HTTP " +
-        String(resp.status) +
-        "). Try again later."
-      );
-    }
-
-    const data = ctx.util.tryParseJson(resp.bodyText);
-    if (!data || !data.device_code || !data.user_code) {
-      ctx.host.log.error("device flow start: invalid response");
-      throw "Usage response invalid. Try again later.";
-    }
-
-    writeJson(ctx, ctx.app.pluginDataDir + "/device_flow.json", {
-      device_code: data.device_code,
-      user_code: data.user_code,
-      expires_at: Date.now() + (data.expires_in || 900) * 1000,
-      interval: data.interval || 5,
-    });
-
-    throw "Visit github.com/login/device and enter: " + data.user_code;
-  }
-
-  function pollDeviceFlow(ctx, state) {
-    let resp;
-    try {
-      resp = ctx.util.request({
-        method: "POST",
-        url: DEVICE_POLL_URL,
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        bodyText:
-          "client_id=" +
-          CLIENT_ID +
-          "&device_code=" +
-          state.device_code +
-          "&grant_type=urn:ietf:params:oauth:grant-type:device_code",
-        timeoutMs: 15000,
-      });
-    } catch (e) {
-      ctx.host.log.error("device flow poll failed: " + String(e));
-      throw "Visit github.com/login/device and enter: " + state.user_code;
-    }
-
-    const data = ctx.util.tryParseJson(resp.bodyText);
-    if (!data) {
-      throw "Visit github.com/login/device and enter: " + state.user_code;
-    }
-
-    if (data.error === "authorization_pending" || data.error === "slow_down") {
-      throw "Visit github.com/login/device and enter: " + state.user_code;
-    }
-
-    if (data.error === "expired_token") {
-      writeJson(ctx, ctx.app.pluginDataDir + "/device_flow.json", null);
-      throw "Code expired. Refresh to try again.";
-    }
-
-    if (data.error) {
-      writeJson(ctx, ctx.app.pluginDataDir + "/device_flow.json", null);
-      throw "Token invalid. Refresh to sign in again.";
-    }
-
-    if (data.access_token) {
-      saveToken(ctx, data.access_token);
-      writeJson(ctx, ctx.app.pluginDataDir + "/device_flow.json", null);
-      return data.access_token;
-    }
-
-    throw "Visit github.com/login/device and enter: " + state.user_code;
-  }
-
-  function handleDeviceFlow(ctx) {
-    const state = readJson(ctx, ctx.app.pluginDataDir + "/device_flow.json");
-    if (state && state.device_code && state.user_code) {
-      if (state.expires_at && Date.now() > state.expires_at) {
-        writeJson(ctx, ctx.app.pluginDataDir + "/device_flow.json", null);
-        throw "Code expired. Refresh to try again.";
-      }
-      return pollDeviceFlow(ctx, state);
-    }
-    return startDeviceFlow(ctx);
-  }
-
   function makeProgressLine(ctx, label, snapshot, resetDate) {
     if (!snapshot || typeof snapshot.percent_remaining !== "number")
       return null;
     const usedPercent = Math.max(0, 100 - snapshot.percent_remaining);
-    const line = ctx.line.progress({
+    return ctx.line.progress({
       label: label,
       used: usedPercent,
       limit: 100,
       format: { kind: "percent" },
       resetsAt: ctx.util.toIso(resetDate),
+      periodDurationMs: 30 * 24 * 60 * 60 * 1000,
     });
-    return line;
+  }
+
+  function makeLimitedProgressLine(ctx, label, remaining, total, resetDate) {
+    if (typeof remaining !== "number" || typeof total !== "number" || total <= 0)
+      return null;
+    const used = total - remaining;
+    const usedPercent = Math.round((used / total) * 100);
+    return ctx.line.progress({
+      label: label,
+      used: usedPercent,
+      limit: 100,
+      format: { kind: "percent" },
+      resetsAt: ctx.util.toIso(resetDate),
+      periodDurationMs: 30 * 24 * 60 * 60 * 1000,
+    });
   }
 
   function probe(ctx) {
     const cred = loadToken(ctx);
-    let token = cred ? cred.token : null;
-    let source = cred ? cred.source : null;
-
-    if (!token) {
-      const flowToken = handleDeviceFlow(ctx);
-      token = flowToken;
-      source = "device";
+    if (!cred) {
+      throw "Not logged in. Run `gh auth login` first.";
     }
+
+    const token = cred.token;
+    const source = cred.source;
 
     let resp;
     try {
@@ -249,26 +152,7 @@
     }
 
     if (resp.status === 401 || resp.status === 403) {
-      if (source === "gh-cli") {
-        ctx.host.log.info(
-          "gh-cli token returned " +
-            resp.status +
-            ", falling through to device flow",
-        );
-        const flowToken2 = handleDeviceFlow(ctx);
-        token = flowToken2;
-        try {
-          resp = fetchUsage(ctx, token);
-        } catch (e2) {
-          ctx.host.log.error("usage retry exception: " + String(e2));
-          throw "Usage request failed. Check your connection.";
-        }
-        if (resp.status === 401 || resp.status === 403) {
-          throw "Token invalid. Refresh to sign in again.";
-        }
-      } else {
-        throw "Token invalid. Refresh to sign in again.";
-      }
+      throw "Token invalid. Run `gh auth login` to re-authenticate.";
     }
 
     if (resp.status < 200 || resp.status >= 300) {
@@ -280,6 +164,7 @@
       );
     }
 
+    // Persist gh-cli token to OpenUsage keychain for future use
     if (source === "gh-cli") {
       saveToken(ctx, token);
     }
@@ -297,6 +182,7 @@
       plan = ctx.fmt.planLabel(data.copilot_plan);
     }
 
+    // Paid tier: quota_snapshots
     const snapshots = data.quota_snapshots;
     if (snapshots) {
       const premiumLine = makeProgressLine(
@@ -314,6 +200,19 @@
         data.quota_reset_date,
       );
       if (chatLine) lines.push(chatLine);
+    }
+
+    // Free tier: limited_user_quotas
+    if (data.limited_user_quotas && data.monthly_quotas) {
+      const lq = data.limited_user_quotas;
+      const mq = data.monthly_quotas;
+      const resetDate = data.limited_user_reset_date;
+
+      const chatLine = makeLimitedProgressLine(ctx, "Chat", lq.chat, mq.chat, resetDate);
+      if (chatLine) lines.push(chatLine);
+
+      const completionsLine = makeLimitedProgressLine(ctx, "Completions", lq.completions, mq.completions, resetDate);
+      if (completionsLine) lines.push(completionsLine);
     }
 
     if (lines.length === 0) {

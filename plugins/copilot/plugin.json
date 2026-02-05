@@ -13,6 +13,7 @@
       "scope": "overview",
       "primary": true
     },
-    { "type": "progress", "label": "Chat", "scope": "overview" }
+    { "type": "progress", "label": "Chat", "scope": "overview" },
+    { "type": "progress", "label": "Completions", "scope": "overview" }
   ]
 }

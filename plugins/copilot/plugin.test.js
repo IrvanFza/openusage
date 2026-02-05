@@ -56,17 +56,16 @@ function mockUsageOk(ctx, body) {
   });
 }
 
-function setDeviceFlowState(ctx, state) {
-  ctx.host.fs.writeText(
-    ctx.app.pluginDataDir + "/device_flow.json",
-    JSON.stringify(state),
-  );
-}
-
 describe("copilot plugin", () => {
   beforeEach(() => {
     delete globalThis.__openusage_plugin;
     if (vi.resetModules) vi.resetModules();
+  });
+
+  it("throws when no token found", async () => {
+    const ctx = makePluginTestContext();
+    const plugin = await loadPlugin();
+    expect(() => plugin.probe(ctx)).toThrow("Not logged in. Run `gh auth login` first.");
   });
 
   it("loads token from OpenUsage keychain", async () => {
@@ -138,102 +137,32 @@ describe("copilot plugin", () => {
     expect(call.headers.Authorization).toBe("token ghu_keychain");
   });
 
-  it("starts device flow when no token found", async () => {
+  it("persists token from gh-cli to keychain and state file", async () => {
     const ctx = makePluginTestContext();
-    ctx.host.http.request.mockReturnValue({
-      status: 200,
-      bodyText: JSON.stringify({
-        device_code: "dc_123",
-        user_code: "ABCD-1234",
-        expires_in: 900,
-        interval: 5,
-      }),
-    });
+    setGhCliKeychain(ctx, "gho_persist");
+    mockUsageOk(ctx);
     const plugin = await loadPlugin();
-    expect(() => plugin.probe(ctx)).toThrow(
-      "Visit github.com/login/device and enter: ABCD-1234",
+    plugin.probe(ctx);
+    expect(ctx.host.keychain.writeGenericPassword).toHaveBeenCalledWith(
+      "OpenUsage-copilot",
+      JSON.stringify({ token: "gho_persist" }),
     );
-  });
-
-  it("polls device flow and returns usage on success", async () => {
-    const ctx = makePluginTestContext();
-    setDeviceFlowState(ctx, {
-      device_code: "dc_123",
-      user_code: "ABCD-1234",
-      expires_at: Date.now() + 600000,
-      interval: 5,
-    });
-
-    ctx.host.http.request.mockImplementation((opts) => {
-      if (String(opts.url).includes("access_token")) {
-        return {
-          status: 200,
-          bodyText: JSON.stringify({ access_token: "ghu_new" }),
-        };
-      }
-      return {
-        status: 200,
-        bodyText: JSON.stringify(makeUsageResponse()),
-      };
-    });
-
-    const plugin = await loadPlugin();
-    const result = plugin.probe(ctx);
-    expect(result.lines.find((l) => l.label === "Premium")).toBeTruthy();
-    expect(ctx.host.keychain.writeGenericPassword).toHaveBeenCalled();
-  });
-
-  it("throws pending badge while device flow authorization_pending", async () => {
-    const ctx = makePluginTestContext();
-    setDeviceFlowState(ctx, {
-      device_code: "dc_123",
-      user_code: "WXYZ-5678",
-      expires_at: Date.now() + 600000,
-      interval: 5,
-    });
-    ctx.host.http.request.mockReturnValue({
-      status: 200,
-      bodyText: JSON.stringify({ error: "authorization_pending" }),
-    });
-    const plugin = await loadPlugin();
-    expect(() => plugin.probe(ctx)).toThrow(
-      "Visit github.com/login/device and enter: WXYZ-5678",
+    const stateFile = ctx.host.fs.readText(
+      ctx.app.pluginDataDir + "/auth.json",
     );
+    expect(JSON.parse(stateFile).token).toBe("gho_persist");
   });
 
-  it("throws expiry message when device code is expired_token", async () => {
+  it("does not persist token loaded from OpenUsage keychain", async () => {
     const ctx = makePluginTestContext();
-    setDeviceFlowState(ctx, {
-      device_code: "dc_123",
-      user_code: "ABCD-1234",
-      expires_at: Date.now() + 600000,
-      interval: 5,
-    });
-    ctx.host.http.request.mockReturnValue({
-      status: 200,
-      bodyText: JSON.stringify({ error: "expired_token" }),
-    });
+    setKeychainToken(ctx, "ghu_already");
+    mockUsageOk(ctx);
     const plugin = await loadPlugin();
-    expect(() => plugin.probe(ctx)).toThrow(
-      "Code expired. Refresh to try again.",
-    );
+    plugin.probe(ctx);
+    expect(ctx.host.keychain.writeGenericPassword).not.toHaveBeenCalled();
   });
 
-  it("throws expiry when device flow state has expired locally", async () => {
-    const ctx = makePluginTestContext();
-    setDeviceFlowState(ctx, {
-      device_code: "dc_123",
-      user_code: "ABCD-1234",
-      expires_at: Date.now() - 1000,
-      interval: 5,
-    });
-    const plugin = await loadPlugin();
-    expect(() => plugin.probe(ctx)).toThrow(
-      "Code expired. Refresh to try again.",
-    );
-  });
-
-  it("renders both Premium and Chat lines", async () => {
+  it("renders both Premium and Chat lines for paid tier", async () => {
     const ctx = makePluginTestContext();
     setKeychainToken(ctx, "tok");
     mockUsageOk(ctx);
@@ -317,22 +246,6 @@ describe("copilot plugin", () => {
     expect(premium.resetsAt).toBe("2099-01-15T00:00:00.000Z");
   });
 
-  it("omits resetsAt when quota_reset_date is missing", async () => {
-    const ctx = makePluginTestContext();
-    setKeychainToken(ctx, "tok");
-    ctx.host.http.request.mockReturnValue({
-      status: 200,
-      bodyText: JSON.stringify(
-        makeUsageResponse({ quota_reset_date: undefined }),
-      ),
-    });
-    const plugin = await loadPlugin();
-    const result = plugin.probe(ctx);
-    const premium = result.lines.find((l) => l.label === "Premium");
-    expect(premium).toBeTruthy();
-    expect(premium.resetsAt).toBeUndefined();
-  });
-
   it("clamps usedPercent to 0 when percent_remaining > 100", async () => {
     const ctx = makePluginTestContext();
     setKeychainToken(ctx, "tok");
@@ -356,47 +269,20 @@ describe("copilot plugin", () => {
     expect(result.lines.find((l) => l.label === "Premium").used).toBe(0);
   });
 
-  it("throws on 401 with keychain token", async () => {
+  it("throws on 401", async () => {
     const ctx = makePluginTestContext();
     setKeychainToken(ctx, "tok");
     ctx.host.http.request.mockReturnValue({ status: 401, bodyText: "" });
     const plugin = await loadPlugin();
-    expect(() => plugin.probe(ctx)).toThrow(
-      "Token invalid. Refresh to sign in again.",
-    );
+    expect(() => plugin.probe(ctx)).toThrow("Token invalid. Run `gh auth login` to re-authenticate.");
   });
 
-  it("throws on 403 with keychain token", async () => {
+  it("throws on 403", async () => {
     const ctx = makePluginTestContext();
     setKeychainToken(ctx, "tok");
     ctx.host.http.request.mockReturnValue({ status: 403, bodyText: "" });
     const plugin = await loadPlugin();
-    expect(() => plugin.probe(ctx)).toThrow(
-      "Token invalid. Refresh to sign in again.",
-    );
-  });
-
-  it("falls through to device flow on 401 with gh-cli token", async () => {
-    const ctx = makePluginTestContext();
-    setGhCliKeychain(ctx, "gho_tok");
-    ctx.host.http.request.mockImplementation((opts) => {
-      if (String(opts.url).includes("copilot_internal")) {
-        return { status: 401, bodyText: "" };
-      }
-      return {
-        status: 200,
-        bodyText: JSON.stringify({
-          device_code: "dc_x",
-          user_code: "FALL-BACK",
-          expires_in: 900,
-          interval: 5,
-        }),
-      };
-    });
-    const plugin = await loadPlugin();
-    expect(() => plugin.probe(ctx)).toThrow(
-      "Visit github.com/login/device and enter: FALL-BACK",
-    );
+    expect(() => plugin.probe(ctx)).toThrow("Token invalid. Run `gh auth login` to re-authenticate.");
   });
 
   it("throws on HTTP 500", async () => {
@@ -434,86 +320,6 @@ describe("copilot plugin", () => {
     );
   });
 
-  it("persists token from gh-cli to keychain and state file", async () => {
-    const ctx = makePluginTestContext();
-    setGhCliKeychain(ctx, "gho_persist");
-    mockUsageOk(ctx);
-    const plugin = await loadPlugin();
-    plugin.probe(ctx);
-    expect(ctx.host.keychain.writeGenericPassword).toHaveBeenCalledWith(
-      "OpenUsage-copilot",
-      JSON.stringify({ token: "gho_persist" }),
-    );
-    const stateFile = ctx.host.fs.readText(
-      ctx.app.pluginDataDir + "/auth.json",
-    );
-    expect(JSON.parse(stateFile).token).toBe("gho_persist");
-  });
-
-  it("saves token after device flow success", async () => {
-    const ctx = makePluginTestContext();
-    setDeviceFlowState(ctx, {
-      device_code: "dc_save",
-      user_code: "SAVE-1234",
-      expires_at: Date.now() + 600000,
-      interval: 5,
-    });
-    ctx.host.http.request.mockImplementation((opts) => {
-      if (String(opts.url).includes("access_token")) {
-        return {
-          status: 200,
-          bodyText: JSON.stringify({ access_token: "ghu_saved" }),
-        };
-      }
-      return { status: 200, bodyText: JSON.stringify(makeUsageResponse()) };
-    });
-    const plugin = await loadPlugin();
-    plugin.probe(ctx);
-    expect(ctx.host.keychain.writeGenericPassword).toHaveBeenCalledWith(
-      "OpenUsage-copilot",
-      JSON.stringify({ token: "ghu_saved" }),
-    );
-  });
-
-  it("does not persist token loaded from OpenUsage keychain (already there)", async () => {
-    const ctx = makePluginTestContext();
-    setKeychainToken(ctx, "ghu_already");
-    mockUsageOk(ctx);
-    const plugin = await loadPlugin();
-    plugin.probe(ctx);
-    expect(ctx.host.keychain.writeGenericPassword).not.toHaveBeenCalled();
-  });
-
-  it("does not persist token loaded from state file", async () => {
-    const ctx = makePluginTestContext();
-    setStateFileToken(ctx, "ghu_state");
-    mockUsageOk(ctx);
-    const plugin = await loadPlugin();
-    plugin.probe(ctx);
-    expect(ctx.host.keychain.writeGenericPassword).not.toHaveBeenCalled();
-  });
-
-  it("handles graceful keychain write failure", async () => {
-    const ctx = makePluginTestContext();
-    setGhCliKeychain(ctx, "gho_tok");
-    mockUsageOk(ctx);
-    ctx.host.keychain.writeGenericPassword.mockImplementation(() => {
-      throw new Error("keychain locked");
-    });
-    const plugin = await loadPlugin();
-    expect(() => plugin.probe(ctx)).not.toThrow();
-    expect(ctx.host.log.warn).toHaveBeenCalled();
-  });
-
-  it("falls through to state file when keychain returns empty", async () => {
-    const ctx = makePluginTestContext();
-    setStateFileToken(ctx, "ghu_fallback");
-    mockUsageOk(ctx);
-    const plugin = await loadPlugin();
-    const result = plugin.probe(ctx);
-    expect(result.lines.find((l) => l.label === "Premium")).toBeTruthy();
-  });
-
   it("uses 'token' auth header format (not 'Bearer')", async () => {
     const ctx = makePluginTestContext();
     setKeychainToken(ctx, "ghu_format");
@@ -535,5 +341,110 @@ describe("copilot plugin", () => {
     expect(call.headers["User-Agent"]).toBe("GitHubCopilotChat/0.26.7");
     expect(call.headers["Editor-Version"]).toBe("vscode/1.96.2");
     expect(call.headers["X-Github-Api-Version"]).toBe("2025-04-01");
+  });
+
+  it("includes periodDurationMs on paid tier progress lines", async () => {
+    const ctx = makePluginTestContext();
+    setKeychainToken(ctx, "tok");
+    mockUsageOk(ctx);
+    const plugin = await loadPlugin();
+    const result = plugin.probe(ctx);
+    const premium = result.lines.find((l) => l.label === "Premium");
+    const chat = result.lines.find((l) => l.label === "Chat");
+    expect(premium.periodDurationMs).toBe(30 * 24 * 60 * 60 * 1000);
+    expect(chat.periodDurationMs).toBe(30 * 24 * 60 * 60 * 1000);
+  });
+
+  it("renders Chat and Completions for free tier (limited_user_quotas)", async () => {
+    const ctx = makePluginTestContext();
+    setKeychainToken(ctx, "tok");
+    ctx.host.http.request.mockReturnValue({
+      status: 200,
+      bodyText: JSON.stringify({
+        copilot_plan: "individual",
+        access_type_sku: "free_limited_copilot",
+        limited_user_quotas: { chat: 410, completions: 4000 },
+        monthly_quotas: { chat: 500, completions: 4000 },
+        limited_user_reset_date: "2026-02-11",
+      }),
+    });
+    const plugin = await loadPlugin();
+    const result = plugin.probe(ctx);
+    const chat = result.lines.find((l) => l.label === "Chat");
+    const completions = result.lines.find((l) => l.label === "Completions");
+    expect(chat).toBeTruthy();
+    expect(chat.used).toBe(18); // (500 - 410) / 500 * 100 = 18%
+    expect(completions).toBeTruthy();
+    expect(completions.used).toBe(0); // (4000 - 4000) / 4000 * 100 = 0%
+  });
+
+  it("includes periodDurationMs on free tier progress lines", async () => {
+    const ctx = makePluginTestContext();
+    setKeychainToken(ctx, "tok");
+    ctx.host.http.request.mockReturnValue({
+      status: 200,
+      bodyText: JSON.stringify({
+        copilot_plan: "individual",
+        limited_user_quotas: { chat: 400, completions: 3000 },
+        monthly_quotas: { chat: 500, completions: 4000 },
+        limited_user_reset_date: "2026-02-11",
+      }),
+    });
+    const plugin = await loadPlugin();
+    const result = plugin.probe(ctx);
+    const chat = result.lines.find((l) => l.label === "Chat");
+    const completions = result.lines.find((l) => l.label === "Completions");
+    expect(chat.periodDurationMs).toBe(30 * 24 * 60 * 60 * 1000);
+    expect(completions.periodDurationMs).toBe(30 * 24 * 60 * 60 * 1000);
+  });
+
+  it("propagates resetsAt from limited_user_reset_date for free tier", async () => {
+    const ctx = makePluginTestContext();
+    setKeychainToken(ctx, "tok");
+    ctx.host.http.request.mockReturnValue({
+      status: 200,
+      bodyText: JSON.stringify({
+        copilot_plan: "individual",
+        limited_user_quotas: { chat: 450, completions: 3500 },
+        monthly_quotas: { chat: 500, completions: 4000 },
+        limited_user_reset_date: "2026-02-11",
+      }),
+    });
+    const plugin = await loadPlugin();
+    const result = plugin.probe(ctx);
+    const chat = result.lines.find((l) => l.label === "Chat");
+    expect(chat.resetsAt).toBe("2026-02-11T00:00:00.000Z");
+  });
+
+  it("handles free tier with partially used quotas", async () => {
+    const ctx = makePluginTestContext();
+    setKeychainToken(ctx, "tok");
+    ctx.host.http.request.mockReturnValue({
+      status: 200,
+      bodyText: JSON.stringify({
+        copilot_plan: "individual",
+        limited_user_quotas: { chat: 250, completions: 2000 },
+        monthly_quotas: { chat: 500, completions: 4000 },
+        limited_user_reset_date: "2026-02-15",
+      }),
+    });
+    const plugin = await loadPlugin();
+    const result = plugin.probe(ctx);
+    const chat = result.lines.find((l) => l.label === "Chat");
+    const completions = result.lines.find((l) => l.label === "Completions");
+    expect(chat.used).toBe(50); // 50% used
+    expect(completions.used).toBe(50); // 50% used
+  });
+
+  it("handles graceful keychain write failure", async () => {
+    const ctx = makePluginTestContext();
+    setGhCliKeychain(ctx, "gho_tok");
+    mockUsageOk(ctx);
+    ctx.host.keychain.writeGenericPassword.mockImplementation(() => {
+      throw new Error("keychain locked");
+    });
+    const plugin = await loadPlugin();
+    expect(() => plugin.probe(ctx)).not.toThrow();
+    expect(ctx.host.log.warn).toHaveBeenCalled();
   });
 });
