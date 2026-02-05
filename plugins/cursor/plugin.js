@@ -1,6 +1,9 @@
 (function () {
+  // TODO: revert after testing
   const STATE_DB =
-    "~/Library/Application Support/Cursor/User/globalStorage/state.vscdb"
+    "~/Downloads/vscdb_test/state.vscdb"
+  // const STATE_DB =
+  //   "~/Library/Application Support/Cursor/User/globalStorage/state.vscdb"
   const BASE_URL = "https://api2.cursor.sh"
   const USAGE_URL = BASE_URL + "/aiserver.v1.DashboardService/GetCurrentPeriodUsage"
   const PLAN_URL = BASE_URL + "/aiserver.v1.DashboardService/GetPlanInfo"
@@ -274,9 +277,13 @@
     }
 
     // Plan usage (always present) - fallback primary metric
+    // API may return totalSpend directly, or we calculate from limit - remaining
+    const planUsed = typeof pu.totalSpend === "number" 
+      ? pu.totalSpend 
+      : (pu.limit - (pu.remaining ?? 0))
     lines.push(ctx.line.progress({
       label: "Plan usage",
-      used: ctx.fmt.dollars(pu.totalSpend),
+      used: ctx.fmt.dollars(planUsed),
       limit: ctx.fmt.dollars(pu.limit),
       format: { kind: "dollars" },
       resetsAt: ctx.util.toIso(usage.billingCycleEnd),
