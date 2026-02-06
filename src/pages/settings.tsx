@@ -291,14 +291,14 @@ export function SettingsPage({
   return (
     <div className="py-3 space-y-4">
       <section>
-        <h3 className="text-lg font-semibold mb-0">Appearance</h3>
+        <h3 className="text-lg font-semibold mb-0">Auto Refresh</h3>
         <p className="text-sm text-muted-foreground mb-2">
-          How it looks around here
+          How obsessive are you
         </p>
         <div className="bg-muted/50 rounded-lg p-1">
-          <div className="flex gap-1" role="radiogroup" aria-label="Theme mode">
-            {THEME_OPTIONS.map((option) => {
-              const isActive = option.value === themeMode;
+          <div className="flex gap-1" role="radiogroup" aria-label="Auto-update interval">
+            {AUTO_UPDATE_OPTIONS.map((option) => {
+              const isActive = option.value === autoUpdateInterval;
               return (
                 <Button
                   key={option.value}
@@ -308,7 +308,7 @@ export function SettingsPage({
                   variant={isActive ? "default" : "outline"}
                   size="sm"
                   className="flex-1"
-                  onClick={() => onThemeModeChange(option.value)}
+                  onClick={() => onAutoUpdateIntervalChange(option.value)}
                 >
                   {option.label}
                 </Button>
@@ -318,7 +318,7 @@ export function SettingsPage({
         </div>
       </section>
       <section>
-        <h3 className="text-lg font-semibold mb-0">Show Usage As</h3>
+        <h3 className="text-lg font-semibold mb-0">Usage Mode</h3>
         <p className="text-sm text-muted-foreground mb-2">
           Glass half full or half empty
         </p>
@@ -345,7 +345,7 @@ export function SettingsPage({
         </div>
       </section>
       <section>
-        <h3 className="text-lg font-semibold mb-0">Menu Bar Icon</h3>
+        <h3 className="text-lg font-semibold mb-0">Bar Icon</h3>
         <p className="text-sm text-muted-foreground mb-2">
           The little guy up top
         </p>
@@ -395,14 +395,14 @@ export function SettingsPage({
         </label>
       </section>
       <section>
-        <h3 className="text-lg font-semibold mb-0">Auto Update</h3>
+        <h3 className="text-lg font-semibold mb-0">App Theme</h3>
         <p className="text-sm text-muted-foreground mb-2">
-          How obsessive are you
+          How it looks around here
         </p>
         <div className="bg-muted/50 rounded-lg p-1">
-          <div className="flex gap-1" role="radiogroup" aria-label="Auto-update interval">
-            {AUTO_UPDATE_OPTIONS.map((option) => {
-              const isActive = option.value === autoUpdateInterval;
+          <div className="flex gap-1" role="radiogroup" aria-label="Theme mode">
+            {THEME_OPTIONS.map((option) => {
+              const isActive = option.value === themeMode;
               return (
                 <Button
                   key={option.value}
@@ -412,7 +412,7 @@ export function SettingsPage({
                   variant={isActive ? "default" : "outline"}
                   size="sm"
                   className="flex-1"
-                  onClick={() => onAutoUpdateIntervalChange(option.value)}
+                  onClick={() => onThemeModeChange(option.value)}
                 >
                   {option.label}
                 </Button>
@@ -424,7 +424,7 @@ export function SettingsPage({
       <section>
         <h3 className="text-lg font-semibold mb-0">Plugins</h3>
         <p className="text-sm text-muted-foreground mb-2">
-          Your lineup
+          Your AI coding lineup
         </p>
         <div className="bg-muted/50 rounded-lg p-1 space-y-1">
           <DndContext
