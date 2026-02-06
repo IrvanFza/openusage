@@ -21,18 +21,98 @@ import { Button } from "@/components/ui/button";
 import {
   AUTO_UPDATE_OPTIONS,
   DISPLAY_MODE_OPTIONS,
+  TRAY_ICON_STYLE_OPTIONS,
   THEME_OPTIONS,
   type AutoUpdateIntervalMinutes,
   type DisplayMode,
   type ThemeMode,
+  type TrayIconStyle,
 } from "@/lib/settings";
-import type { UpdateStatus } from "@/hooks/use-app-update";
 import { cn } from "@/lib/utils";
 
 interface PluginConfig {
   id: string;
   name: string;
   enabled: boolean;
+}
+
+function TrayIconStylePreview({
+  style,
+  isActive,
+  showPercentage,
+}: {
+  style: TrayIconStyle;
+  isActive: boolean;
+  showPercentage: boolean;
+}) {
+  const trackClass = isActive ? "bg-white/35" : "bg-black/20";
+  const fillClass = isActive ? "bg-white" : "bg-black";
+  const textClass = isActive ? "text-white" : "text-foreground";
+
+  if (style === "bars") {
+    return (
+      <div className="flex items-center gap-1">
+        <div className="flex flex-col gap-0.5 w-5">
+          {[12, 10, 8].map((w, i) => (
+            <div key={i} className={`h-1 rounded-sm ${trackClass}`}>
+              <div
+                className={`h-1 ${fillClass}`}
+                style={{ width: `${w * 8}%`, borderRadius: "2px 1px 1px 2px" }}
+              />
+            </div>
+          ))}
+        </div>
+        {showPercentage && (
+          <span className={`text-[13px] font-bold tabular-nums leading-none ${textClass}`}>
+            83%
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  if (style === "circle") {
+    return (
+      <div className="flex items-center gap-1">
+        <svg width="11" height="11" viewBox="0 0 26 26" aria-hidden className="shrink-0">
+          <circle
+            cx="13"
+            cy="13"
+            r="9"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="4"
+            opacity={isActive ? 0.35 : 0.2}
+            className={textClass}
+          />
+          <circle
+            cx="13"
+            cy="13"
+            r="9"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="4"
+            strokeLinecap="butt"
+            pathLength="100"
+            strokeDasharray="83 100"
+            transform="rotate(-90 13 13)"
+            className={textClass}
+          />
+        </svg>
+        {showPercentage && (
+          <span className={`text-[13px] font-bold tabular-nums leading-none ${textClass}`}>
+            83%
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <span className={cn("text-[13px] font-bold tabular-nums leading-none", textClass)}>
+      83%
+    </span>
+  );
 }
 
 function SortablePluginItem({
@@ -103,8 +183,10 @@ interface SettingsPageProps {
   onThemeModeChange: (value: ThemeMode) => void;
   displayMode: DisplayMode;
   onDisplayModeChange: (value: DisplayMode) => void;
-  updateStatus: UpdateStatus;
-  onCheckForUpdates: () => void;
+  trayIconStyle: TrayIconStyle;
+  onTrayIconStyleChange: (value: TrayIconStyle) => void;
+  trayShowPercentage: boolean;
+  onTrayShowPercentageChange: (value: boolean) => void;
 }
 
 export function SettingsPage({
@@ -117,8 +199,10 @@ export function SettingsPage({
   onThemeModeChange,
   displayMode,
   onDisplayModeChange,
-  updateStatus,
-  onCheckForUpdates,
+  trayIconStyle,
+  onTrayIconStyleChange,
+  trayShowPercentage,
+  onTrayShowPercentageChange,
 }: SettingsPageProps) {
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -169,7 +253,7 @@ export function SettingsPage({
         </div>
       </section>
       <section>
-        <h3 className="text-lg font-semibold mb-1">Usage Display</h3>
+        <h3 className="text-lg font-semibold mb-1">Show Usage As</h3>
         <p className="text-sm text-foreground mb-2">
           Show how much was used or is left
         </p>
@@ -194,6 +278,49 @@ export function SettingsPage({
             })}
           </div>
         </div>
+      </section>
+      <section>
+        <h3 className="text-lg font-semibold mb-1">Menu Bar Icon</h3>
+        <p className="text-sm text-foreground mb-2">
+          Choose how usage appears in the menu bar icon.
+        </p>
+        <div className="bg-muted/50 rounded-lg p-1">
+          <div className="flex gap-1" role="radiogroup" aria-label="Tray icon style">
+            {TRAY_ICON_STYLE_OPTIONS.map((option) => {
+              const isActive = option.value === trayIconStyle;
+              const showPreviewPercent =
+                option.value !== "textOnly" && trayShowPercentage;
+              return (
+                <Button
+                  key={option.value}
+                  type="button"
+                  role="radio"
+                  aria-label={option.label}
+                  aria-checked={isActive}
+                  variant={isActive ? "default" : "outline"}
+                  size="sm"
+                  className="flex-1"
+                  onClick={() => onTrayIconStyleChange(option.value)}
+                >
+                  <TrayIconStylePreview
+                    style={option.value}
+                    isActive={isActive}
+                    showPercentage={showPreviewPercent}
+                  />
+                </Button>
+              );
+            })}
+          </div>
+        </div>
+        {trayIconStyle !== "textOnly" && (
+          <label className="mt-2 inline-flex items-center gap-2 text-sm text-foreground">
+            <Checkbox
+              checked={trayShowPercentage}
+              onCheckedChange={onTrayShowPercentageChange}
+            />
+            <span>Show percentage next to icon</span>
+          </label>
+        )}
       </section>
       <section>
         <h3 className="text-lg font-semibold mb-1">Auto Update</h3>
@@ -247,19 +374,6 @@ export function SettingsPage({
             </SortableContext>
           </DndContext>
         </div>
-      </section>
-      <section>
-        <Button
-          variant="outline"
-          size="sm"
-          className="w-full"
-          onClick={onCheckForUpdates}
-          disabled={updateStatus.status === "checking" || updateStatus.status === "downloading" || updateStatus.status === "installing" || updateStatus.status === "ready" || updateStatus.status === "up-to-date"}
-        >
-          {updateStatus.status === "checking" ? "Checking..." 
-            : updateStatus.status === "up-to-date" ? "No update available"
-            : "Check for updates"}
-        </Button>
       </section>
     </div>
   );

@@ -30,8 +30,68 @@ describe("tray-bars-icon", () => {
       ],
     })
 
-    // 3 tracks + 1 fill (0.5) => 4 rects total.
-    expect(svg.match(/<rect /g)?.length).toBe(4)
+    // 3 track rects + 1 fill path (0.5)
+    expect(svg.match(/<rect /g)?.length).toBe(3)
+    expect(svg.match(/<path /g)?.length).toBe(1)
+  })
+
+  it("makeTrayBarsSvg with bars style + percent text includes text and a non-square viewbox", () => {
+    const svg = makeTrayBarsSvg({
+      sizePx: 18,
+      bars: [{ id: "a", fraction: 0.83 }],
+      style: "bars",
+      percentText: "83%",
+    })
+
+    expect(svg).toContain(">83%</text>")
+    const viewBox = svg.match(/viewBox="0 0 (\d+) (\d+)"/)
+    expect(viewBox).toBeTruthy()
+    if (viewBox) {
+      const width = Number(viewBox[1])
+      const height = Number(viewBox[2])
+      expect(width).toBeGreaterThan(height)
+    }
+  })
+
+  it("text styles omit text when percentText is missing", () => {
+    const svg = makeTrayBarsSvg({
+      sizePx: 18,
+      bars: [{ id: "a", fraction: undefined }],
+      style: "bars",
+    })
+    expect(svg).not.toContain("<text ")
+  })
+
+  it("textOnly style renders text without bars", () => {
+    const svg = makeTrayBarsSvg({
+      sizePx: 36,
+      style: "textOnly",
+      percentText: "10%",
+      bars: [
+        { id: "a", fraction: 0.5 },
+        { id: "b", fraction: 0.75 },
+      ],
+    })
+    expect(svg.match(/<rect /g)?.length ?? 0).toBe(0)
+    expect(svg).toContain(">10%</text>")
+  })
+
+  it("circle style renders circles and text", () => {
+    const svg = makeTrayBarsSvg({
+      sizePx: 36,
+      style: "circle",
+      percentText: "83%",
+      bars: [{ id: "a", fraction: 0.83 }],
+    })
+    expect(svg.match(/<circle /g)?.length).toBe(2)
+    expect(svg).toContain(">83%</text>")
+    const viewBox = svg.match(/viewBox="0 0 (\d+) (\d+)"/)
+    expect(viewBox).toBeTruthy()
+    if (viewBox) {
+      const width = Number(viewBox[1])
+      const height = Number(viewBox[2])
+      expect(width).toBeGreaterThan(height)
+    }
   })
 
   it("renderTrayBarsIcon rasterizes SVG to an Image using canvas", async () => {
@@ -82,4 +142,3 @@ describe("tray-bars-icon", () => {
     }
   })
 })
-
