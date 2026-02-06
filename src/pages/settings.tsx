@@ -36,6 +36,24 @@ interface PluginConfig {
   enabled: boolean;
 }
 
+const PREVIEW_BAR_TRACK_PX = 20;
+const PREVIEW_MIN_REMAINDER_PX = 2;
+const PREVIEW_EDGE_DIVIDER_PX = 2;
+
+function getPreviewBarLayout(fraction: number): { fillPercent: number; showDivider: boolean } {
+  const clamped = Math.max(0, Math.min(1, fraction));
+  if (clamped <= 0) return { fillPercent: 0, showDivider: false };
+  if (clamped >= 1) return { fillPercent: 100, showDivider: false };
+
+  const minFillW = 1;
+  const maxFillW = Math.max(minFillW, PREVIEW_BAR_TRACK_PX - PREVIEW_MIN_REMAINDER_PX);
+  const fillW = Math.max(minFillW, Math.min(maxFillW, Math.round(PREVIEW_BAR_TRACK_PX * clamped)));
+  return {
+    fillPercent: (fillW / PREVIEW_BAR_TRACK_PX) * 100,
+    showDivider: fillW > 0 && fillW < PREVIEW_BAR_TRACK_PX,
+  };
+}
+
 function TrayIconStylePreview({
   style,
   isActive,
@@ -50,17 +68,35 @@ function TrayIconStylePreview({
   const textClass = isActive ? "text-white" : "text-foreground";
 
   if (style === "bars") {
+    const fractions = [0.83, 0.7, 0.56];
     return (
       <div className="flex items-center gap-1">
         <div className="flex flex-col gap-0.5 w-5">
-          {[12, 10, 8].map((w, i) => (
-            <div key={i} className={`h-1 rounded-sm ${trackClass}`}>
-              <div
-                className={`h-1 ${fillClass}`}
-                style={{ width: `${w * 8}%`, borderRadius: "2px 1px 1px 2px" }}
-              />
-            </div>
-          ))}
+          {fractions.map((fraction, i) => {
+            const { fillPercent, showDivider } = getPreviewBarLayout(fraction);
+            return (
+              <div key={i} className={`relative h-1 rounded-sm ${trackClass}`}>
+                <div
+                  className={`h-1 ${fillClass}`}
+                  style={{ width: `${fillPercent}%`, borderRadius: "2px 1px 1px 2px" }}
+                />
+                {showDivider && (
+                  <span
+                    aria-hidden
+                    className={fillClass}
+                    style={{
+                      position: "absolute",
+                      left: `calc(${fillPercent}% - ${PREVIEW_EDGE_DIVIDER_PX / 2}px)`,
+                      top: 0,
+                      bottom: 0,
+                      width: PREVIEW_EDGE_DIVIDER_PX,
+                      opacity: 0.5,
+                    }}
+                  />
+                )}
+              </div>
+            );
+          })}
         </div>
         {showPercentage && (
           <span className={`text-[13px] font-bold tabular-nums leading-none ${textClass}`}>
@@ -315,10 +351,11 @@ export function SettingsPage({
         {trayIconStyle !== "textOnly" && (
           <label className="mt-2 inline-flex items-center gap-2 text-sm text-foreground">
             <Checkbox
+              key={`tray-show-percentage-${trayShowPercentage}`}
               checked={trayShowPercentage}
-              onCheckedChange={onTrayShowPercentageChange}
+              onCheckedChange={(checked) => onTrayShowPercentageChange(checked === true)}
             />
-            <span>Show percentage next to icon</span>
+            <span>Show percentage</span>
           </label>
         )}
       </section>

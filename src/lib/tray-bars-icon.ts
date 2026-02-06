@@ -56,10 +56,57 @@ function getBarsForStyle(style: TrayIconStyle, bars: TrayPrimaryBar[]): TrayPrim
   return bars
 }
 
+function getMinVisibleRemainderPx(trackW: number): number {
+  // Keep remainder clearly visible after tray downsampling.
+  return Math.max(4, Math.round(trackW * 0.2))
+}
+const EDGE_DIVIDER_STROKE_PX = 2
+
+function getVisualBarFraction(fraction: number): number {
+  if (!Number.isFinite(fraction)) return 0
+  const clamped = Math.max(0, Math.min(1, fraction))
+  if (clamped > 0.7 && clamped < 1) {
+    // Quantize high-end bars by remainder in 15% steps so near-full values
+    // still leave a meaningful visible tail.
+    const remainder = 1 - clamped
+    const quantizedRemainder = Math.min(1, Math.ceil(remainder / 0.15) * 0.15)
+    return Math.max(0, 1 - quantizedRemainder)
+  }
+  return clamped
+}
+
+function getBarFillLayout(trackW: number, fraction: number): {
+  fillW: number
+  remainderDrawW: number
+  dividerX: number | null
+} {
+  if (!Number.isFinite(fraction) || fraction <= 0) {
+    return { fillW: 0, remainderDrawW: 0, dividerX: null }
+  }
+
+  const visual = getVisualBarFraction(fraction)
+  if (visual >= 1) {
+    return { fillW: trackW, remainderDrawW: 0, dividerX: null }
+  }
+
+  const minVisibleRemainderPx = getMinVisibleRemainderPx(trackW)
+  const maxFillW = Math.max(1, trackW - minVisibleRemainderPx)
+  const fillW = Math.max(1, Math.min(maxFillW, Math.round(trackW * visual)))
+  const trueRemainderW = trackW - fillW
+  const remainderDrawW = Math.min(trackW - 1, Math.max(trueRemainderW, minVisibleRemainderPx))
+  const dividerX = trackW - remainderDrawW
+  return { fillW, remainderDrawW, dividerX }
+}
+
+function estimateTextWidthPx(text: string, fontSize: number): number {
+  // Empirical estimate for SF Pro bold numeric glyphs in tray-sized icons.
+  return Math.ceil(text.length * fontSize * 0.62 + fontSize * 0.2)
+}
+
 function getSvgLayout(args: {
   sizePx: number
   style: TrayIconStyle
-  hasPercentText: boolean
+  percentText?: string
 }): {
   width: number
   height: number
@@ -71,7 +118,8 @@ function getSvgLayout(args: {
   textY: number
   fontSize: number
 } {
-  const { sizePx, style, hasPercentText } = args
+  const { sizePx, style, percentText } = args
+  const hasPercentText = typeof percentText === "string" && percentText.length > 0
   const verticalNudgePx = 1
   const pad = Math.max(1, Math.round(sizePx * 0.08)) // ~2px at 24–36px
   const gap = Math.max(1, Math.round(sizePx * 0.03)) // ~1px at 36px
@@ -80,13 +128,14 @@ function getSvgLayout(args: {
   const barsX = pad
   const barsWidth = sizePx - 2 * pad
   const fontSize = Math.max(9, Math.round(sizePx * 0.72))
+  const textWidth = hasPercentText ? estimateTextWidthPx(percentText, fontSize) : 0
   // Optical correction + global nudge down to align with the tray slot center.
   const textY = Math.round(sizePx / 2) + 1 + verticalNudgePx
 
   if (style === "textOnly") {
-    const textWidth = Math.max(12, Math.round(sizePx * 1.08))
+    const textOnlyWidth = Math.max(Math.round(sizePx * 1.08), textWidth)
     return {
-      width: hasPercentText ? textWidth + 2 * pad : sizePx,
+      width: hasPercentText ? textOnlyWidth + 2 * pad : sizePx,
       height,
       pad,
       gap,
@@ -113,7 +162,7 @@ function getSvgLayout(args: {
   }
 
   const textGap = Math.max(2, Math.round(sizePx * 0.08))
-  const textAreaWidth = Math.max(20, Math.round(sizePx * 1.5))
+  const textAreaWidth = Math.max(20, Math.round(sizePx * 1.5), textWidth + pad)
   const rightPad = pad
 
   return {
@@ -142,7 +191,7 @@ export function makeTrayBarsSvg(args: {
   const layout = getSvgLayout({
     sizePx,
     style,
-    hasPercentText: Boolean(text),
+    percentText: text,
   })
 
   const width = layout.width
@@ -162,7 +211,8 @@ export function makeTrayBarsSvg(args: {
   const availableHeight = height - 2 * layout.pad
   const yOffset = layout.pad + Math.floor((availableHeight - totalBarsHeight) / 2)
 
-  const trackOpacity = 0.22
+  const trackOpacity = 0.32
+  const remainderOpacity = 0.58
   const fillOpacity = 1
 
   const parts: string[] = []
@@ -205,8 +255,7 @@ export function makeTrayBarsSvg(args: {
 
       const fraction = bar?.fraction
       if (typeof fraction === "number" && Number.isFinite(fraction) && fraction >= 0) {
-        const clamped = Math.max(0, Math.min(1, fraction))
-        const fillW = Math.max(0, Math.round(trackW * clamped))
+        const { fillW, remainderDrawW, dividerX } = getBarFillLayout(trackW, fraction)
         if (fillW > 0) {
           const movingEdgeRadius = Math.max(0, Math.floor(rx * 0.35))
           if (fillW >= trackW) {
@@ -224,6 +273,22 @@ export function makeTrayBarsSvg(args: {
             })
             parts.push(`<path d="${fillPath}" fill="black" opacity="${fillOpacity}" />`)
           }
+        }
+
+        if (fillW > 0 && remainderDrawW > 0 && dividerX !== null) {
+          const remainderX = x + dividerX
+          const remainderPath = makeRoundedBarPath({
+            x: remainderX,
+            y,
+            w: remainderDrawW,
+            h: trackH,
+            leftRadius: Math.max(0, Math.floor(rx * 0.2)),
+            rightRadius: rx,
+          })
+          parts.push(`<path d="${remainderPath}" fill="black" opacity="${remainderOpacity}" />`)
+          parts.push(
+            `<line x1="${remainderX}" y1="${y + 1}" x2="${remainderX}" y2="${y + trackH - 1}" stroke="black" stroke-width="${EDGE_DIVIDER_STROKE_PX}" opacity="0.88" shape-rendering="crispEdges" />`
+          )
         }
       }
     }
@@ -284,7 +349,7 @@ export async function renderTrayBarsIcon(args: {
   const layout = getSvgLayout({
     sizePx,
     style,
-    hasPercentText: Boolean(text),
+    percentText: text,
   })
   const rgba = await rasterizeSvgToRgba(svg, layout.width, layout.height)
   return await Image.new(rgba, layout.width, layout.height)

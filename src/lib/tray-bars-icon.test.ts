@@ -30,9 +30,21 @@ describe("tray-bars-icon", () => {
       ],
     })
 
-    // 3 track rects + 1 fill path (0.5)
+    // 3 track rects + fill/remainder paths for the defined fraction.
     expect(svg.match(/<rect /g)?.length).toBe(3)
-    expect(svg.match(/<path /g)?.length).toBe(1)
+    expect(svg.match(/<path /g)?.length).toBe(2)
+    expect(svg).toContain("<line ")
+  })
+
+  it("compresses 91-99% bar fill to 90% visual width", () => {
+    const svg = makeTrayBarsSvg({
+      sizePx: 36,
+      bars: [{ id: "a", fraction: 0.93 }],
+      style: "bars",
+    })
+    // For size 36 bars: x starts at 3px, high-end compression + min remainder
+    // lands divider at x=27 (visually ~80% fill).
+    expect(svg).toContain('x1="27"')
   })
 
   it("makeTrayBarsSvg with bars style + percent text includes text and a non-square viewbox", () => {
@@ -74,6 +86,23 @@ describe("tray-bars-icon", () => {
     })
     expect(svg.match(/<rect /g)?.length ?? 0).toBe(0)
     expect(svg).toContain(">10%</text>")
+  })
+
+  it("textOnly style allocates enough width for percent text", () => {
+    const svg = makeTrayBarsSvg({
+      sizePx: 18,
+      style: "textOnly",
+      percentText: "90%",
+      bars: [{ id: "a", fraction: 0.1 }],
+    })
+    const viewBox = svg.match(/viewBox="0 0 (\d+) (\d+)"/)
+    expect(viewBox).toBeTruthy()
+    if (viewBox) {
+      const width = Number(viewBox[1])
+      const height = Number(viewBox[2])
+      expect(width).toBeGreaterThan(height)
+      expect(width).toBeGreaterThanOrEqual(28)
+    }
   })
 
   it("circle style renders circles and text", () => {

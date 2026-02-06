@@ -483,7 +483,7 @@ describe("App", () => {
     const settingsButtons = await screen.findAllByRole("button", { name: "Settings" })
     await userEvent.click(settingsButtons[0])
 
-    await userEvent.click(await screen.findByText("Show percentage next to icon"))
+    await userEvent.click(await screen.findByText("Show percentage"))
     expect(state.saveTrayShowPercentageMock).toHaveBeenCalledWith(true)
   })
 
@@ -494,7 +494,7 @@ describe("App", () => {
 
     await userEvent.click(await screen.findByRole("radio", { name: "83%" }))
     await waitFor(() =>
-      expect(screen.queryByText("Show percentage next to icon")).not.toBeInTheDocument()
+      expect(screen.queryByText("Show percentage")).not.toBeInTheDocument()
     )
   })
 

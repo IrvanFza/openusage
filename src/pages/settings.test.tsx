@@ -205,7 +205,7 @@ describe("SettingsPage", () => {
         trayIconStyle="bars"
       />
     )
-    expect(screen.getByText("Show percentage next to icon")).toBeInTheDocument()
+    expect(screen.getByText("Show percentage")).toBeInTheDocument()
 
     rerender(
       <SettingsPage
@@ -213,7 +213,7 @@ describe("SettingsPage", () => {
         trayIconStyle="circle"
       />
     )
-    expect(screen.getByText("Show percentage next to icon")).toBeInTheDocument()
+    expect(screen.getByText("Show percentage")).toBeInTheDocument()
 
     rerender(
       <SettingsPage
@@ -221,7 +221,7 @@ describe("SettingsPage", () => {
         trayIconStyle="textOnly"
       />
     )
-    expect(screen.queryByText("Show percentage next to icon")).not.toBeInTheDocument()
+    expect(screen.queryByText("Show percentage")).not.toBeInTheDocument()
   })
 
   it("toggles show percentage checkbox", async () => {
@@ -233,7 +233,7 @@ describe("SettingsPage", () => {
         onTrayShowPercentageChange={onTrayShowPercentageChange}
       />
     )
-    await userEvent.click(screen.getByText("Show percentage next to icon"))
+    await userEvent.click(screen.getByText("Show percentage"))
     expect(onTrayShowPercentageChange).toHaveBeenCalled()
     expect(onTrayShowPercentageChange.mock.calls[0]?.[0]).toBe(false)
   })
