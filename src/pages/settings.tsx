@@ -6,19 +6,19 @@ import {
   useSensor,
   useSensors,
   type DragEndEvent,
-} from "@dnd-kit/core"
+} from "@dnd-kit/core";
 import {
   arrayMove,
   SortableContext,
   sortableKeyboardCoordinates,
   useSortable,
   verticalListSortingStrategy,
-} from "@dnd-kit/sortable"
-import { CSS } from "@dnd-kit/utilities"
-import { GripVertical } from "lucide-react"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Button } from "@/components/ui/button"
-import { GlobalShortcutSection } from "@/components/global-shortcut-section"
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { GripVertical } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Button } from "@/components/ui/button";
+import { GlobalShortcutSection } from "@/components/global-shortcut-section";
 import {
   AUTO_UPDATE_OPTIONS,
   DISPLAY_MODE_OPTIONS,
@@ -30,8 +30,8 @@ import {
   type GlobalShortcut,
   type ThemeMode,
   type TrayIconStyle,
-} from "@/lib/settings"
-import { cn } from "@/lib/utils"
+} from "@/lib/settings";
+import { cn } from "@/lib/utils";
 
 interface PluginConfig {
   id: string;

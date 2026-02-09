@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Button } from "@/components/ui/button"
+import { invoke, isTauri } from "@tauri-apps/api/core"
+import { X, AlertTriangle } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { GlobalShortcut } from "@/lib/settings"
 
@@ -143,6 +143,33 @@ function buildShortcutFromCodes(codes: Set<string>): { display: string; tauri: s
   return { display, tauri }
 }
 
+async function checkAccessibilityPermission(): Promise<boolean> {
+  if (!isTauri()) return true // Always granted in web context
+  try {
+    return await invoke<boolean>("check_accessibility_permission")
+  } catch {
+    return true // Assume granted if command fails (non-macOS)
+  }
+}
+
+async function requestAccessibilityPermission(): Promise<boolean> {
+  if (!isTauri()) return true
+  try {
+    return await invoke<boolean>("request_accessibility_permission")
+  } catch {
+    return true
+  }
+}
+
+async function openAccessibilitySettings(): Promise<void> {
+  if (!isTauri()) return
+  try {
+    await invoke("open_accessibility_settings")
+  } catch {
+    // Ignore errors on non-macOS platforms
+  }
+}
+
 interface GlobalShortcutSectionProps {
   globalShortcut: GlobalShortcut
   onGlobalShortcutChange: (value: GlobalShortcut) => void
@@ -152,22 +179,21 @@ export function GlobalShortcutSection({
   globalShortcut,
   onGlobalShortcutChange,
 }: GlobalShortcutSectionProps) {
-  const isEnabled = globalShortcut !== null
-  const defaultShortcut = "CommandOrControl+Shift+U"
   const [isRecording, setIsRecording] = useState(false)
+  const [hasAccessibilityPermission, setHasAccessibilityPermission] = useState<boolean | null>(null)
   // Track pressed keys using event.code (physical key location)
   const pressedCodesRef = useRef<Set<string>>(new Set())
   const [pendingShortcut, setPendingShortcut] = useState<string | null>(null)
   const [pendingDisplay, setPendingDisplay] = useState<string>("")
-  // Remember the last shortcut so we can restore it on re-enable
-  const lastShortcutRef = useRef<string>(defaultShortcut)
   // Ref for the recording input to focus it properly
   const recordingRef = useRef<HTMLDivElement>(null)
 
-  // Update last shortcut ref when shortcut changes
+  // Check accessibility permission when shortcut is set
   useEffect(() => {
     if (globalShortcut) {
-      lastShortcutRef.current = globalShortcut
+      checkAccessibilityPermission().then(setHasAccessibilityPermission)
+    } else {
+      setHasAccessibilityPermission(null)
     }
   }, [globalShortcut])
 
@@ -182,21 +208,19 @@ export function GlobalShortcutSection({
     }
   }, [isRecording])
 
-  const handleToggle = (checked: boolean) => {
-    if (checked) {
-      // Restore last used shortcut (or default if none)
-      onGlobalShortcutChange(lastShortcutRef.current)
-    } else {
-      onGlobalShortcutChange(null)
-      setIsRecording(false)
-      pressedCodesRef.current = new Set()
-      setPendingShortcut(null)
-      setPendingDisplay("")
-    }
+  const startRecording = async () => {
+    // Check and request accessibility permission before recording
+    const hasPermission = await requestAccessibilityPermission()
+    setHasAccessibilityPermission(hasPermission)
+
+    setIsRecording(true)
+    pressedCodesRef.current = new Set()
+    setPendingShortcut(null)
+    setPendingDisplay("")
   }
 
-  const startRecording = () => {
-    setIsRecording(true)
+  const stopRecording = () => {
+    setIsRecording(false)
     pressedCodesRef.current = new Set()
     setPendingShortcut(null)
     setPendingDisplay("")
@@ -206,12 +230,10 @@ export function GlobalShortcutSection({
     e.preventDefault()
     e.stopPropagation()
 
-    // Escape cancels recording
+    // Escape cancels recording and clears the shortcut (disabled state)
     if (e.code === "Escape") {
-      setIsRecording(false)
-      pressedCodesRef.current = new Set()
-      setPendingShortcut(null)
-      setPendingDisplay("")
+      onGlobalShortcutChange(null)
+      stopRecording()
       return
     }
 
@@ -230,25 +252,29 @@ export function GlobalShortcutSection({
     e.preventDefault()
     e.stopPropagation()
 
-    // Remove this key code from the ref (but don't update display - keep showing last combo)
+    // Remove this key code from the ref
     pressedCodesRef.current.delete(e.code)
-  }
 
-  const handleAccept = () => {
-    if (pendingShortcut) {
+    // When all keys are released and we have a valid shortcut, save it
+    if (pressedCodesRef.current.size === 0 && pendingShortcut) {
       onGlobalShortcutChange(pendingShortcut)
+      stopRecording()
     }
-    setIsRecording(false)
-    pressedCodesRef.current = new Set()
-    setPendingShortcut(null)
-    setPendingDisplay("")
   }
 
-  const handleCancel = () => {
-    setIsRecording(false)
-    pressedCodesRef.current = new Set()
-    setPendingShortcut(null)
-    setPendingDisplay("")
+  const handleClear = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    onGlobalShortcutChange(null)
+  }
+
+  const handleBlur = () => {
+    // If user clicks away during recording, cancel without saving
+    stopRecording()
+  }
+
+  const handleOpenSettings = async (e: React.MouseEvent) => {
+    e.preventDefault()
+    await openAccessibilitySettings()
   }
 
   // Display value logic
@@ -257,8 +283,11 @@ export function GlobalShortcutSection({
       if (pendingDisplay) return pendingDisplay
       return "Press keys..."
     }
-    return globalShortcut ? formatShortcutForDisplay(globalShortcut) : ""
+    return globalShortcut ? formatShortcutForDisplay(globalShortcut) : "Click to set"
   }
+
+  const hasShortcut = globalShortcut !== null
+  const showPermissionWarning = hasShortcut && hasAccessibilityPermission === false
 
   return (
     <section>
@@ -267,69 +296,72 @@ export function GlobalShortcutSection({
         Show panel from anywhere
       </p>
       <div className="space-y-2">
-        <label className="flex items-center gap-2 text-sm select-none">
-          <Checkbox
-            checked={isEnabled}
-            onCheckedChange={(checked) => handleToggle(checked === true)}
-          />
-          Enable shortcut
-        </label>
-        {isEnabled && (
-          <div className="space-y-2">
-            {isRecording ? (
-              <>
-                <div
-                  ref={recordingRef}
-                  tabIndex={0}
-                  role="textbox"
-                  aria-label="Press keys to record shortcut"
-                  onKeyDown={handleKeyDown}
-                  onKeyUp={handleKeyUp}
-                  className={cn(
-                    "w-full h-8 px-3 text-sm rounded-md border-2 border-primary bg-muted/50",
-                    "flex items-center outline-none",
-                    !pendingDisplay && "text-muted-foreground"
-                  )}
-                >
-                  {getDisplayValue()}
-                </div>
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={handleAccept}
-                    disabled={!pendingShortcut}
-                  >
-                    Save
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={handleCancel}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              </>
-            ) : (
+        {isRecording ? (
+          <div
+            ref={recordingRef}
+            tabIndex={0}
+            role="textbox"
+            aria-label="Press keys to record shortcut"
+            onKeyDown={handleKeyDown}
+            onKeyUp={handleKeyUp}
+            onBlur={handleBlur}
+            className={cn(
+              "w-full h-8 px-3 text-sm rounded-md border-2 border-primary bg-muted/50",
+              "flex items-center outline-none",
+              !pendingDisplay && "text-muted-foreground"
+            )}
+          >
+            {getDisplayValue()}
+          </div>
+        ) : (
+          <div
+            className={cn(
+              "w-full h-8 px-3 text-sm rounded-md border bg-muted/50",
+              "flex items-center text-left hover:bg-muted transition-colors cursor-pointer",
+              !hasShortcut && "text-muted-foreground"
+            )}
+            onClick={startRecording}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") startRecording() }}
+            role="button"
+            tabIndex={0}
+          >
+            <span>{getDisplayValue()}</span>
+            {hasShortcut ? (
               <button
                 type="button"
-                onClick={startRecording}
-                className={cn(
-                  "w-full h-8 px-3 text-sm rounded-md border bg-muted/50",
-                  "flex items-center text-left hover:bg-muted transition-colors"
-                )}
+                onClick={handleClear}
+                className="ml-auto p-0.5 rounded hover:bg-background/50 text-muted-foreground hover:text-foreground transition-colors"
+                aria-label="Clear shortcut"
               >
-                <span>{getDisplayValue()}</span>
-                <span className="ml-auto text-xs text-muted-foreground">Click to change</span>
+                <X className="h-3.5 w-3.5" />
               </button>
+            ) : (
+              <span className="ml-auto text-xs text-muted-foreground">Click to set</span>
             )}
+          </div>
+        )}
+
+        {showPermissionWarning && (
+          <div className="flex items-start gap-2 p-2 text-xs rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-700 dark:text-amber-400">
+            <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              <p className="font-medium">Accessibility permission required</p>
+              <p className="mt-1 text-amber-600 dark:text-amber-500">
+                <button
+                  type="button"
+                  onClick={handleOpenSettings}
+                  className="underline hover:no-underline cursor-pointer"
+                >
+                  Open System Settings
+                </button>
+                {" "}and enable OpenUsage.
+              </p>
+            </div>
           </div>
         )}
       </div>
       <p className="mt-2 text-xs text-muted-foreground">
-        Requires accessibility permission on macOS
+        Press Escape while recording to clear.
       </p>
     </section>
   )

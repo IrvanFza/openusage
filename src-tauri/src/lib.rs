@@ -22,6 +22,15 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 const GLOBAL_SHORTCUT_STORE_KEY: &str = "globalShortcut";
 
+/// Shared shortcut handler that toggles the panel when the shortcut is pressed.
+#[cfg(desktop)]
+fn handle_global_shortcut(app: &tauri::AppHandle, event: tauri_plugin_global_shortcut::ShortcutEvent) {
+    if event.state == ShortcutState::Pressed {
+        log::debug!("Global shortcut triggered");
+        panel::toggle_panel(app);
+    }
+}
+
 pub struct AppState {
     pub plugins: Vec<plugin_engine::manifest::LoadedPlugin>,
     pub app_data_dir: PathBuf,
@@ -214,6 +223,37 @@ fn get_log_path(app_handle: tauri::AppHandle) -> Result<String, String> {
     Ok(log_file.to_string_lossy().to_string())
 }
 
+/// Check if the app has accessibility permission on macOS.
+/// Returns true if granted, false if not granted.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn check_accessibility_permission() -> bool {
+    macos_accessibility_client::accessibility::application_is_trusted()
+}
+
+/// Request accessibility permission on macOS.
+/// This will show the system permission dialog if not already granted.
+/// Returns true if permission was granted (or already granted), false otherwise.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn request_accessibility_permission() -> bool {
+    macos_accessibility_client::accessibility::application_is_trusted_with_prompt()
+}
+
+/// Open the macOS System Settings > Privacy & Security > Accessibility panel.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn open_accessibility_settings() {
+    use objc2_foundation::NSURL;
+    use objc2_app_kit::NSWorkspace;
+
+    let url_string = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
+    if let Some(url) = NSURL::URLWithString(&objc2_foundation::NSString::from_str(url_string)) {
+        let workspace = NSWorkspace::sharedWorkspace();
+        let _ = workspace.openURL(&url);
+    }
+}
+
 /// Update the global shortcut registration.
 /// Pass `null` to disable the shortcut, or a shortcut string like "CommandOrControl+Shift+U".
 #[cfg(desktop)]
@@ -240,10 +280,7 @@ fn update_global_shortcut(app_handle: tauri::AppHandle, shortcut: Option<String>
     // Register the new shortcut
     global_shortcut
         .on_shortcut(shortcut.as_str(), |app, _shortcut, event| {
-            if event.state == ShortcutState::Pressed {
-                log::debug!("Global shortcut triggered");
-                panel::toggle_panel(app);
-            }
+            handle_global_shortcut(app, event);
         })
         .map_err(|e| format!("Failed to register shortcut '{}': {}", shortcut, e))?;
 
@@ -325,7 +362,13 @@ pub fn run() {
             start_probe_batch,
             list_plugins,
             get_log_path,
-            update_global_shortcut
+            update_global_shortcut,
+            #[cfg(target_os = "macos")]
+            check_accessibility_permission,
+            #[cfg(target_os = "macos")]
+            request_accessibility_permission,
+            #[cfg(target_os = "macos")]
+            open_accessibility_settings
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -373,10 +416,7 @@ pub fn run() {
                                 if let Err(e) = handle.global_shortcut().on_shortcut(
                                     shortcut,
                                     |app, _shortcut, event| {
-                                        if event.state == ShortcutState::Pressed {
-                                            log::debug!("Global shortcut triggered");
-                                            panel::toggle_panel(app);
-                                        }
+                                        handle_global_shortcut(app, event);
                                     },
                                 ) {
                                     log::warn!("Failed to register initial global shortcut: {}", e);

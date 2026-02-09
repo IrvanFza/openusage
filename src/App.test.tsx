@@ -1054,6 +1054,117 @@ describe("App", () => {
     expect(state.startBatchMock).toHaveBeenCalledWith(["a"])
   })
 
+  it("clears global shortcut via clear button and invokes update_global_shortcut with null", async () => {
+    // Start with shortcut enabled
+    state.loadGlobalShortcutMock.mockResolvedValueOnce("CommandOrControl+Shift+U")
+
+    render(<App />)
+    const settingsButtons = await screen.findAllByRole("button", { name: "Settings" })
+    await userEvent.click(settingsButtons[0])
+
+    // The shortcut should be displayed
+    await screen.findByText(/Cmd \+ Shift \+ U/i)
+
+    // Find and click the clear button (X icon)
+    const clearButton = await screen.findByRole("button", { name: /clear shortcut/i })
+    await userEvent.click(clearButton)
+
+    // Clearing should save null and invoke update_global_shortcut with null
+    await waitFor(() => expect(state.saveGlobalShortcutMock).toHaveBeenCalledWith(null))
+    await waitFor(() =>
+      expect(state.invokeMock).toHaveBeenCalledWith("update_global_shortcut", {
+        shortcut: null,
+      })
+    )
+  })
+
+  it("loads global shortcut from settings on startup", async () => {
+    state.loadGlobalShortcutMock.mockResolvedValueOnce("CommandOrControl+Shift+O")
+
+    render(<App />)
+    const settingsButtons = await screen.findAllByRole("button", { name: "Settings" })
+    await userEvent.click(settingsButtons[0])
+
+    // The shortcut should be displayed (formatted version)
+    await screen.findByText(/Cmd \+ Shift \+ O/i)
+  })
+
+  it("shows placeholder when no shortcut is set", async () => {
+    state.loadGlobalShortcutMock.mockResolvedValueOnce(null)
+
+    render(<App />)
+    const settingsButtons = await screen.findAllByRole("button", { name: "Settings" })
+    await userEvent.click(settingsButtons[0])
+
+    // Should show the placeholder text (appears twice: as main text and as hint)
+    const placeholders = await screen.findAllByText(/Click to set/i)
+    expect(placeholders.length).toBeGreaterThan(0)
+  })
+
+  it("logs error when loading global shortcut fails", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+    state.loadGlobalShortcutMock.mockRejectedValueOnce(new Error("load shortcut failed"))
+
+    render(<App />)
+    await waitFor(() =>
+      expect(errorSpy).toHaveBeenCalledWith("Failed to load global shortcut:", expect.any(Error))
+    )
+
+    errorSpy.mockRestore()
+  })
+
+  it("logs error when saving global shortcut fails", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+    // Start with a shortcut so we can clear it
+    state.loadGlobalShortcutMock.mockResolvedValueOnce("CommandOrControl+Shift+U")
+    state.saveGlobalShortcutMock.mockRejectedValueOnce(new Error("save shortcut failed"))
+
+    render(<App />)
+    const settingsButtons = await screen.findAllByRole("button", { name: "Settings" })
+    await userEvent.click(settingsButtons[0])
+
+    // Clear the shortcut to trigger save
+    const clearButton = await screen.findByRole("button", { name: /clear shortcut/i })
+    await userEvent.click(clearButton)
+
+    await waitFor(() =>
+      expect(errorSpy).toHaveBeenCalledWith("Failed to save global shortcut:", expect.any(Error))
+    )
+
+    errorSpy.mockRestore()
+  })
+
+  it("logs error when update_global_shortcut invoke fails", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+    // Start with a shortcut so we can clear it
+    state.loadGlobalShortcutMock.mockResolvedValueOnce("CommandOrControl+Shift+U")
+    state.invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "list_plugins") {
+        return [
+          { id: "a", name: "Alpha", iconUrl: "icon-a", primaryProgressLabel: null, lines: [] },
+        ]
+      }
+      if (cmd === "update_global_shortcut") {
+        throw new Error("shortcut registration failed")
+      }
+      return null
+    })
+
+    render(<App />)
+    const settingsButtons = await screen.findAllByRole("button", { name: "Settings" })
+    await userEvent.click(settingsButtons[0])
+
+    // Clear the shortcut to trigger invoke
+    const clearButton = await screen.findByRole("button", { name: /clear shortcut/i })
+    await userEvent.click(clearButton)
+
+    await waitFor(() =>
+      expect(errorSpy).toHaveBeenCalledWith("Failed to update global shortcut:", expect.any(Error))
+    )
+
+    errorSpy.mockRestore()
+  })
+
   it("updates tray icon without requestAnimationFrame (regression test for hidden panel)", async () => {
     vi.useFakeTimers()
 
