@@ -31,6 +31,7 @@
     "active": true,
     "targets": "all",
     "macOS": {
+      "infoPlist": "Info.plist",
       "dmg": {
         "appPosition": {
           "x": 180,

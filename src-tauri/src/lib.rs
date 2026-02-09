@@ -7,15 +7,20 @@ mod tray;
 mod webkit_config;
 
 use std::collections::{HashMap, HashSet};
-use tauri_plugin_aptabase::EventTracker;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tauri::Emitter;
+use tauri_plugin_aptabase::EventTracker;
 use tauri_plugin_log::{Target, TargetKind};
 use uuid::Uuid;
+
+#[cfg(desktop)]
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
+const GLOBAL_SHORTCUT_STORE_KEY: &str = "globalShortcut";
 
 pub struct AppState {
     pub plugins: Vec<plugin_engine::manifest::LoadedPlugin>,
@@ -209,6 +214,42 @@ fn get_log_path(app_handle: tauri::AppHandle) -> Result<String, String> {
     Ok(log_file.to_string_lossy().to_string())
 }
 
+/// Update the global shortcut registration.
+/// Pass `null` to disable the shortcut, or a shortcut string like "CommandOrControl+Shift+U".
+#[cfg(desktop)]
+#[tauri::command]
+fn update_global_shortcut(app_handle: tauri::AppHandle, shortcut: Option<String>) -> Result<(), String> {
+    let global_shortcut = app_handle.global_shortcut();
+
+    // Unregister all existing shortcuts first
+    if let Err(e) = global_shortcut.unregister_all() {
+        log::warn!("Failed to unregister existing shortcuts: {}", e);
+    }
+
+    // If shortcut is None or empty, we're done (disabled state)
+    let shortcut = match shortcut {
+        Some(s) if !s.trim().is_empty() => s,
+        _ => {
+            log::info!("Global shortcut disabled");
+            return Ok(());
+        }
+    };
+
+    log::info!("Registering global shortcut: {}", shortcut);
+
+    // Register the new shortcut
+    global_shortcut
+        .on_shortcut(shortcut.as_str(), |app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                log::debug!("Global shortcut triggered");
+                panel::toggle_panel(app);
+            }
+        })
+        .map_err(|e| format!("Failed to register shortcut '{}': {}", shortcut, e))?;
+
+    Ok(())
+}
+
 #[tauri::command]
 fn list_plugins(state: tauri::State<'_, Mutex<AppState>>) -> Vec<PluginMeta> {
     let plugins = {
@@ -277,12 +318,14 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             init_panel,
             hide_panel,
             start_probe_batch,
             list_plugins,
-            get_log_path
+            get_log_path,
+            update_global_shortcut
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -315,6 +358,34 @@ pub fn run() {
             tray::create(app.handle())?;
 
             app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+
+            // Register global shortcut from stored settings
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_store::StoreExt;
+
+                if let Ok(store) = app.handle().store("settings.json") {
+                    if let Some(shortcut_value) = store.get(GLOBAL_SHORTCUT_STORE_KEY) {
+                        if let Some(shortcut) = shortcut_value.as_str() {
+                            if !shortcut.is_empty() {
+                                let handle = app.handle().clone();
+                                log::info!("Registering initial global shortcut: {}", shortcut);
+                                if let Err(e) = handle.global_shortcut().on_shortcut(
+                                    shortcut,
+                                    |app, _shortcut, event| {
+                                        if event.state == ShortcutState::Pressed {
+                                            log::debug!("Global shortcut triggered");
+                                            panel::toggle_panel(app);
+                                        }
+                                    },
+                                ) {
+                                    log::warn!("Failed to register initial global shortcut: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             Ok(())
         })
