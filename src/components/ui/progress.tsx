@@ -23,10 +23,10 @@ const Progress = React.forwardRef<HTMLDivElement, ProgressProps>(
       clampedMarker === null
         ? undefined
         : clampedMarker <= 0
-          ? "translate(0, -50%)"
+          ? "translateX(0)"
           : clampedMarker >= 100
-            ? "translate(-100%, -50%)"
-            : "translate(-50%, -50%)"
+            ? "translateX(-100%)"
+            : "translateX(-50%)"
     const markerStyle = showMarker
       ? {
           left: `${clampedMarker}%`,
@@ -52,7 +52,7 @@ const Progress = React.forwardRef<HTMLDivElement, ProgressProps>(
           <div
             data-slot="progress-marker"
             aria-hidden="true"
-            className="absolute top-1/2 size-1.5 rounded-full z-10 pointer-events-none bg-primary border border-muted dark:border-[#353537]"
+            className="absolute top-0 bottom-0 w-[2px] z-10 pointer-events-none bg-muted-foreground opacity-50"
             style={markerStyle}
           />
         )}
