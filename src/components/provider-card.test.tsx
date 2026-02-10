@@ -484,9 +484,9 @@ describe("ProviderCard", () => {
     expect(markers[0]?.style.left).toBe("50%")
     expect(markers[1]?.style.left).toBe("50%")
     expect(markers[2]?.style.left).toBe("50%")
-    expect(markers[0]).toHaveClass("bg-primary")
-    expect(markers[1]).toHaveClass("bg-primary")
-    expect(markers[2]).toHaveClass("bg-primary")
+    expect(markers[0]).toHaveClass("bg-muted-foreground")
+    expect(markers[1]).toHaveClass("bg-muted-foreground")
+    expect(markers[2]).toHaveClass("bg-muted-foreground")
     vi.useRealTimers()
   })
 
@@ -567,7 +567,7 @@ describe("ProviderCard", () => {
     const marker = document.querySelector<HTMLElement>('[data-slot="progress-marker"]')
     expect(marker).toBeTruthy()
     expect(marker?.style.left).toBe("3.125%")
-    expect(marker).toHaveClass("bg-primary")
+    expect(marker).toHaveClass("bg-muted-foreground")
     vi.useRealTimers()
   })
 
