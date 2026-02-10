@@ -252,9 +252,16 @@ fn update_global_shortcut(app_handle: tauri::AppHandle, shortcut: Option<String>
         return Ok(());
     }
 
-    if let Some(existing) = managed_shortcut.take() {
-        if let Err(e) = global_shortcut.unregister(existing.as_str()) {
-            log::warn!("Failed to unregister existing shortcut '{}': {}", existing, e);
+    let previous_shortcut = managed_shortcut.clone();
+    if let Some(existing) = previous_shortcut.as_deref() {
+        match global_shortcut.unregister(existing) {
+            Ok(()) => {
+                // Keep in-memory state aligned with actual registration state.
+                *managed_shortcut = None;
+            }
+            Err(e) => {
+                log::warn!("Failed to unregister existing shortcut '{}': {}", existing, e);
+            }
         }
     }
 
