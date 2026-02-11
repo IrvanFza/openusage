@@ -1,9 +1,14 @@
+import fs from "node:fs"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { makeCtx } from "../test-helpers.js"
 
 const loadPlugin = async () => {
   await import("./plugin.js")
   return globalThis.__openusage_plugin
+}
+
+function loadManifest() {
+  return JSON.parse(fs.readFileSync(new URL("./plugin.json", import.meta.url), "utf8"))
 }
 
 // --- Fixtures ---
@@ -52,7 +57,7 @@ function makeUserStatusResponse(overrides) {
             quotaInfo: { remainingFraction: 0.5, resetTime: "2026-02-08T09:10:56Z" },
           },
           {
-            label: "Claude Opus 4.5 (Thinking)",
+            label: "Claude Opus 4.6 (Thinking)",
             modelOrAlias: { model: "MODEL_1012" },
             quotaInfo: { remainingFraction: 0.8, resetTime: "2026-02-08T09:10:56Z" },
           },
@@ -156,6 +161,13 @@ describe("antigravity plugin", () => {
     vi.resetModules()
   })
 
+  it("keeps Claude Opus 4.6 as the overview label", () => {
+    const manifest = loadManifest()
+    const opus = manifest.lines.find((line) => line.label.includes("Claude Opus"))
+    expect(opus?.label).toBe("Claude Opus 4.6")
+    expect(opus?.scope).toBe("overview")
+  })
+
   it("throws when LS not found and no DB credentials", async () => {
     const ctx = makeCtx()
     ctx.host.ls.discover.mockReturnValue(null)
@@ -202,7 +214,7 @@ describe("antigravity plugin", () => {
     expect(labels).toContain("Gemini 3 Pro")
     expect(labels).toContain("Gemini 3 Flash")
     expect(labels).toContain("Claude Sonnet 4.5")
-    expect(labels).toContain("Claude Opus 4.5")
+    expect(labels).toContain("Claude Opus 4.6")
     expect(labels).toContain("GPT-OSS 120B")
   })
 
@@ -236,7 +248,7 @@ describe("antigravity plugin", () => {
     expect(labels).toEqual([
       "Gemini 3 Pro",
       "Gemini 3 Flash",
-      "Claude Opus 4.5",
+      "Claude Opus 4.6",
       "Claude Sonnet 4.5",
       "GPT-OSS 120B",
     ])
@@ -1165,8 +1177,8 @@ describe("antigravity plugin", () => {
                 model: "MODEL_PLACEHOLDER_M8",
                 quotaInfo: { remainingFraction: 0.7, resetTime: "2026-02-08T10:00:00Z" },
               },
-              "claude-opus-4-5-thinking": {
-                displayName: "Claude Opus 4.5 (Thinking)",
+              "claude-opus-4-6-thinking": {
+                displayName: "Claude Opus 4.6 (Thinking)",
                 model: "MODEL_PLACEHOLDER_M12",
                 quotaInfo: { remainingFraction: 1, resetTime: "2026-02-08T10:00:00Z" },
               },
@@ -1187,7 +1199,7 @@ describe("antigravity plugin", () => {
 
     const labels = result.lines.map((l) => l.label)
     expect(labels).toContain("Gemini 3 Pro")
-    expect(labels).toContain("Claude Opus 4.5")
+    expect(labels).toContain("Claude Opus 4.6")
     expect(labels).toContain("GPT-OSS 120B")
     expect(labels.length).toBe(3)
   })
