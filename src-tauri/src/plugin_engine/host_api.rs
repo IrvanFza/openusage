@@ -345,7 +345,10 @@ fn inject_fs<'js>(ctx: &Ctx<'js>, host: &Object<'js>) -> rquickjs::Result<()> {
                                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                                 .map(|d| d.as_millis() as i64)
                                 .unwrap_or(0);
-                            let canonical = entry.canonicalize().unwrap_or(entry.clone());
+                            let canonical = entry.canonicalize().unwrap_or_else(|e| {
+                                log::debug!("canonicalize failed for {}: {}", entry.display(), e);
+                                entry.clone()
+                            });
                             entries.push(serde_json::json!({
                                 "path": canonical.to_string_lossy(),
                                 "size": meta.len() as i64,
