@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 
-const WHITELISTED_ENV_VARS: [&str; 3] = ["CODEX_HOME", "ZAI_API_KEY", "GLM_API_KEY"];
+const WHITELISTED_ENV_VARS: [&str; 4] = ["CODEX_HOME", "ZAI_API_KEY", "GLM_API_KEY", "CLAUDE_CONFIG_DIR"];
 
 fn last_non_empty_trimmed_line(text: &str) -> Option<String> {
     text.lines()
@@ -313,6 +313,55 @@ fn inject_fs<'js>(ctx: &Ctx<'js>, host: &Object<'js>) -> rquickjs::Result<()> {
                 std::fs::write(&expanded, &content).map_err(|e| {
                     Exception::throw_message(&ctx_inner, &e.to_string())
                 })
+            },
+        )?,
+    )?;
+
+    fs_obj.set(
+        "_globRaw",
+        Function::new(
+            ctx.clone(),
+            move |ctx_inner: Ctx<'_>, base_dir: String, pattern: String| -> rquickjs::Result<String> {
+                let expanded_base = expand_path(&base_dir);
+                let base = std::path::Path::new(&expanded_base);
+                if !base.is_dir() {
+                    return Ok("[]".to_string());
+                }
+                let full_pattern = format!("{}/{}", expanded_base, pattern);
+                let mut entries: Vec<serde_json::Value> = Vec::new();
+                match glob::glob(&full_pattern) {
+                    Ok(paths) => {
+                        for entry in paths.flatten() {
+                            if !entry.is_file() {
+                                continue;
+                            }
+                            let meta = match std::fs::metadata(&entry) {
+                                Ok(m) => m,
+                                Err(_) => continue,
+                            };
+                            let mtime_ms = meta
+                                .modified()
+                                .ok()
+                                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                                .map(|d| d.as_millis() as i64)
+                                .unwrap_or(0);
+                            let canonical = entry.canonicalize().unwrap_or(entry.clone());
+                            entries.push(serde_json::json!({
+                                "path": canonical.to_string_lossy(),
+                                "size": meta.len() as i64,
+                                "mtimeMs": mtime_ms
+                            }));
+                        }
+                    }
+                    Err(e) => {
+                        return Err(Exception::throw_message(
+                            &ctx_inner,
+                            &format!("glob pattern error: {}", e),
+                        ));
+                    }
+                }
+                serde_json::to_string(&entries)
+                    .map_err(|e| Exception::throw_message(&ctx_inner, &e.to_string()))
             },
         )?,
     )?;
@@ -1047,6 +1096,21 @@ pub fn patch_ls_wrapper(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
                 try { optsJson = JSON.stringify(opts); } catch (e) { return null; }
                 var json = rawFn(optsJson);
                 if (json === "null") return null;
+                return JSON.parse(json);
+            };
+        })();
+        "#
+        .as_bytes(),
+    )
+}
+
+pub fn patch_fs_glob_wrapper(ctx: &rquickjs::Ctx<'_>) -> rquickjs::Result<()> {
+    ctx.eval::<(), _>(
+        r#"
+        (function() {
+            var rawFn = __openusage_ctx.host.fs._globRaw;
+            __openusage_ctx.host.fs.glob = function(baseDir, pattern) {
+                var json = rawFn(baseDir, pattern);
                 return JSON.parse(json);
             };
         })();

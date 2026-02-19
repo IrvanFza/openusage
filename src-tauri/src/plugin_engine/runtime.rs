@@ -83,6 +83,9 @@ pub fn run_probe(
         if host_api::patch_ls_wrapper(&ctx).is_err() {
             return error_output(plugin, "ls wrapper patch failed".to_string());
         }
+        if host_api::patch_fs_glob_wrapper(&ctx).is_err() {
+            return error_output(plugin, "fs glob wrapper patch failed".to_string());
+        }
         if host_api::inject_utils(&ctx).is_err() {
             return error_output(plugin, "utils injection failed".to_string());
         }

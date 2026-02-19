@@ -58,7 +58,26 @@ ctx.host.log.error("API request failed: " + error.message)
 host.fs.exists(path: string): boolean
 host.fs.readText(path: string): string   // Throws on error
 host.fs.writeText(path: string, content: string): void  // Throws on error
+host.fs.glob(baseDir: string, pattern: string): Array<{ path: string, size: number, mtimeMs: number }>
 ```
+
+### `host.fs.glob`
+
+Recursively finds files matching a glob pattern under `baseDir`. Returns an array of file entries with their absolute path, size in bytes, and last modification time in Unix milliseconds (useful for cache invalidation).
+
+Returns an empty array if the base directory does not exist. Throws if the pattern is invalid.
+
+```javascript
+// Find all JSONL log files
+const files = ctx.host.fs.glob("~/.myapp/logs", "**/*.jsonl")
+// Returns: [{ path: "/Users/x/.myapp/logs/2026/session.jsonl", size: 12345, mtimeMs: 1700000000000 }, ...]
+
+for (const file of files) {
+  ctx.host.log.info(file.path + " (" + file.size + " bytes)")
+}
+```
+
+Tilde expansion (`~`) is supported for `baseDir`. Supports `**` for recursive matching.
 
 ### Path Expansion
 
