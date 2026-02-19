@@ -1221,6 +1221,7 @@ fn inject_ccusage<'js>(
                         Ok(None) => {
                             if start.elapsed() > timeout {
                                 let _ = child.kill();
+                                let _ = child.wait();
                                 log::warn!("[plugin:{}] ccusage timed out after 15s", pid);
                                 return Ok("null".to_string());
                             }
